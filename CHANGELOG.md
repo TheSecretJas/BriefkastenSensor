@@ -1,6 +1,11 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.1.1] - 2026-07-08
+### CHanged
+* **CHanged:** Changed thresholds for mail detection
+
+
 ## [2.1.0] - 2026-07-08
 ### Added
 * **TLS Security:** Embedded the Google Trust Services GTS Root R1 certificate and switched the SMTP client from `setInsecure()` to `setCACert()`, so the Gmail server certificate is now properly validated instead of trusted blindly.
