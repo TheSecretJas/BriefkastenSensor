@@ -10,6 +10,12 @@
 // versendet E-Mail-Benachrichtigungen. Das OLED zeigt Raumklima
 // (BME280) und Systemstatus an. Ein Watchdog ueberwacht die Hauptschleife.
 //
+// Handshake: Ereignismeldungen des Senders tragen eine Nonce im Format
+// "STATUS ... #NONCE" und werden unmittelbar mit "ACK #NONCE" quittiert.
+// Trifft dieselbe Nonce erneut ein (Quittung ging verloren), wird nur
+// die Quittung wiederholt, das Ereignis aber nicht doppelt verarbeitet.
+// Meldungen ohne Nonce (Altformat) werden weiterhin akzeptiert.
+//
 // Zusaetzlich stellt das Gateway ein LAN-Web-Portal unter
 // http://briefkastensensor.local/ bereit. Es zeigt den Zustand des
 // Sendemoduls (SYNC-Pakete: Flags, Akkuspannung, Distanz), erlaubt
@@ -76,9 +82,12 @@ bool     alert_active = false;
 uint32_t alert_time   = 0;
 bool     bme_ok       = false;
 
+// Nonce des zuletzt verarbeiteten Ereignisses fuer die Duplikaterkennung
+uint32_t last_evt_nonce = 0;
+
 // Aufgeschobener E-Mail-Versand: wird erst nach dem Abarbeiten
-// eines Paket-Bursts ausgefuehrt, damit das Reset-Kommando das
-// Empfangsfenster des Senders nicht verpasst
+// eines Paket-Bursts ausgefuehrt, damit Quittung und Reset-Kommando
+// die Empfangsfenster des Senders nicht verpassen
 String pending_subject;
 String pending_body;
 
@@ -211,11 +220,11 @@ static void ensureNetwork() {
 }
 
 // ------------------------------------------------------------
-// Verschluesseltes Kommando an den Sender uebertragen.
-// Wird unmittelbar nach einem SYNC-Paket aufgerufen, da der Sender
-// nur dann sein Empfangsfenster geoeffnet hat.
+// Verschluesselten Downlink an den Sender uebertragen.
+// Wird nur aufgerufen, wenn der Sender gerade ein Empfangsfenster
+// geoeffnet hat (nach Ereignis- oder SYNC-Paket).
 // ------------------------------------------------------------
-static void transmitCommand(const char* text) {
+static void transmitDownlink(const char* text, const char* oled_label) {
     uint8_t packet[80];
     size_t len = crypto.encrypt(String(text), packet, sizeof(packet));
     if (len == 0) return;
@@ -226,11 +235,34 @@ static void transmitCommand(const char* text) {
     radio.startReceive();
 
     if (state == RADIOLIB_ERR_NONE) {
-        logUi("Reset-Kommando an Sender uebertragen", "CMD Sent");
+        logUi(String("Downlink gesendet: ") + text, oled_label);
     } else {
-        Serial.print("Fehler: Kommando-Uebertragung, Code ");
+        Serial.print("Fehler: Downlink-Uebertragung, Code ");
         Serial.println(state);
     }
+}
+
+// ------------------------------------------------------------
+// Quittung fuer ein Ereignis mit Nonce senden
+// ------------------------------------------------------------
+static void sendAck(uint32_t nonce) {
+    char msg[16];
+    snprintf(msg, sizeof(msg), "ACK #%08lX", (unsigned long)nonce);
+    transmitDownlink(msg, "ACK Sent");
+}
+
+// ------------------------------------------------------------
+// Ereigniszeile pruefen: akzeptiert "PREFIX" (Altformat) und
+// "PREFIX #NONCE" (Handshake). Nonce 0 bedeutet Altformat.
+// ------------------------------------------------------------
+static bool matchEvent(const String& decoded, const char* prefix, uint32_t& nonce) {
+    nonce = 0;
+    if (!decoded.startsWith(prefix)) return false;
+    int pos = decoded.indexOf('#', strlen(prefix));
+    if (pos >= 0) {
+        nonce = strtoul(decoded.c_str() + pos + 1, nullptr, 16);
+    }
+    return true;
 }
 
 // ------------------------------------------------------------
@@ -255,6 +287,7 @@ static void handlePacket() {
     if (decoded.length() == 0) return;
 
     uint32_t now = millis() / 1000;
+    uint32_t nonce = 0;
 
     if (decoded.startsWith("SYNC ")) {
         // Zustandsmeldung des Senders: Portal aktualisieren, keine E-Mail
@@ -268,24 +301,37 @@ static void handlePacket() {
 
             // Vorgemerktes Reset-Kommando im Empfangsfenster zustellen
             if (portal.resetPending()) {
-                transmitCommand("CMD RESET FLAGS");
+                transmitDownlink("CMD RESET FLAGS", "CMD Sent");
                 portal.clearResetPending();
             }
         } else {
             Serial.println("Fehler: Sync-Paket nicht lesbar");
         }
 
-    } else if (decoded == "STATUS NEW MAIL") {
-        alert_active = true;
-        alert_time = now;
-        logUi("Neuer Postalarm", "Valid Alert");
-        pending_subject = "Posteinwurf";
-        pending_body = "Die Sensorik meldet einen Einwurf, neue Post liegt zur Abholung bereit.";
+    } else if (matchEvent(decoded, "STATUS NEW MAIL", nonce)) {
+        // Empfang sofort quittieren, der Sender wartet nur kurz
+        if (nonce != 0) sendAck(nonce);
+        if (nonce != 0 && nonce == last_evt_nonce) {
+            Serial.println("Duplikat erkannt, nur Quittung wiederholt");
+        } else {
+            last_evt_nonce = nonce;
+            alert_active = true;
+            alert_time = now;
+            logUi("Neuer Postalarm", "Valid Alert");
+            pending_subject = "Posteinwurf";
+            pending_body = "Die Sensorik meldet einen Einwurf, neue Post liegt zur Abholung bereit.";
+        }
 
-    } else if (decoded == "STATUS BATTERY LOW") {
-        logUi("Batteriewarnung", "Batt Alert");
-        pending_subject = "Akku kritisch";
-        pending_body = "Die Akkuspannung am Sendemodul ist unter die kritische Schwelle gefallen. Bitte aufladen!";
+    } else if (matchEvent(decoded, "STATUS BATTERY LOW", nonce)) {
+        if (nonce != 0) sendAck(nonce);
+        if (nonce != 0 && nonce == last_evt_nonce) {
+            Serial.println("Duplikat erkannt, nur Quittung wiederholt");
+        } else {
+            last_evt_nonce = nonce;
+            logUi("Batteriewarnung", "Batt Alert");
+            pending_subject = "Akku kritisch";
+            pending_body = "Die Akkuspannung am Sendemodul ist unter die kritische Schwelle gefallen. Bitte aufladen!";
+        }
 
     } else {
         Serial.println("Unbekannte Nachricht empfangen");
@@ -413,7 +459,8 @@ void loop() {
 
     // Empfangene Pakete verarbeiten. Der Sender schickt Ereignis- und
     // SYNC-Pakete als Burst, daher kurz auf Folgepakete warten, damit
-    // das Reset-Kommando vor dem E-Mail-Versand zugestellt werden kann.
+    // Quittung und Reset-Kommando vor dem E-Mail-Versand zugestellt
+    // werden koennen.
     if (msg_flag) {
         msg_flag = false;
         handlePacket();

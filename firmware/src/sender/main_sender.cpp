@@ -9,6 +9,13 @@
 // Ablauf pro Zyklus: Aufwachen, Akkuspannung und Distanz messen,
 // bei Ereignis verschluesselte LoRa-Nachricht senden, Zustaende im
 // RTC-RAM sichern und fuer eine Stunde in den Deep Sleep wechseln.
+//
+// Handshake: Ereignismeldungen (STATUS ...) tragen eine zufaellige
+// Nonce und werden vom Gateway mit "ACK #NONCE" quittiert. Bleibt die
+// Quittung aus, wird bis zu ACK_RETRIES mal wiederholt. Erst nach
+// erfolgreicher Quittung wird das zugehoerige Flag im RTC-RAM gesetzt,
+// andernfalls wiederholt der naechste Weckzyklus die Meldung. SYNC-
+// Pakete bleiben bewusst unquittiert, da sie stuendlich erneuert werden.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -16,6 +23,7 @@
 #include <RadioLib.h>
 #include <VL53L0X.h>
 #include "esp_sleep.h"
+#include "esp_random.h"
 
 #include "../common/nvs_config.h"
 #include "../common/aes_crypto.h"
@@ -48,6 +56,10 @@ static const float    BATT_THRESH_HIGH  = 3.60; // V, Warnung zuruecksetzen
 static const uint64_t SLEEP_US          = 3600ULL * 1000000ULL; // 1 Stunde
 static const uint32_t RX_WINDOW_MS      = 2000; // Empfangsfenster nach SYNC
 
+// Handshake-Parameter fuer Ereignismeldungen
+static const uint32_t ACK_WAIT_MS = 2000;  // Wartezeit auf Quittung je Versuch
+static const int      ACK_RETRIES = 3;     // Sendeversuche je Ereignis
+
 // Zustaende ueberleben den Deep Sleep im RTC-RAM.
 // Ersetzt rtc.memory() aus MicroPython, ein Power-Cycle setzt beide
 // Flags automatisch auf null (ersetzt resett_flags.py).
@@ -62,7 +74,7 @@ SX1262    radio = new Module(PIN_LORA_CS, PIN_LORA_DIO1, PIN_LORA_RST,
 VL53L0X   tof_sensor;
 AesCrypto crypto;
 
-// RX-Flag fuer das Empfangsfenster nach dem SYNC-Paket
+// RX-Flag fuer Empfangsfenster (Quittungen und Kommandos)
 volatile bool rx_flag = false;
 
 void IRAM_ATTR onLoraReceive() {
@@ -100,6 +112,77 @@ static void sendEncrypted(const char* text) {
 }
 
 // ------------------------------------------------------------
+// Empfangsfenster: wartet bis zu timeout_ms auf das erste gueltig
+// entschluesselbare Paket. Rueckgabe: true wenn eines empfangen wurde.
+// ------------------------------------------------------------
+static bool receiveDecrypted(uint32_t timeout_ms, String& decoded) {
+    decoded = "";
+    rx_flag = false;
+    radio.setDio1Action(onLoraReceive);
+    if (radio.startReceive() != RADIOLIB_ERR_NONE) {
+        radio.clearDio1Action();
+        return false;
+    }
+
+    uint32_t start = millis();
+    bool got_packet = false;
+    while (millis() - start < timeout_ms) {
+        if (rx_flag) {
+            rx_flag = false;
+            uint8_t payload[80];
+            size_t len = radio.getPacketLength();
+            if (len > sizeof(payload)) len = sizeof(payload);
+            if (radio.readData(payload, len) == RADIOLIB_ERR_NONE && len > 0) {
+                decoded = crypto.decrypt(payload, len);
+                if (decoded.length() > 0) {
+                    got_packet = true;
+                    break;
+                }
+            }
+            // Unlesbares Paket verwerfen und weiter lauschen
+            radio.startReceive();
+        }
+        delay(5);
+    }
+
+    radio.clearDio1Action();
+    radio.standby();
+    return got_packet;
+}
+
+// ------------------------------------------------------------
+// Ereignismeldung mit Handshake senden: Nachricht traegt eine
+// zufaellige Nonce, das Gateway antwortet mit "ACK #NONCE".
+// Rueckgabe: true wenn das Gateway den Empfang quittiert hat.
+// ------------------------------------------------------------
+static bool sendWithAck(const char* event_text) {
+    uint32_t nonce = esp_random();
+    if (nonce == 0) nonce = 1;  // 0 ist fuer Altformat reserviert
+
+    char msg[48];
+    snprintf(msg, sizeof(msg), "%s #%08lX", event_text, (unsigned long)nonce);
+    char expected[16];
+    snprintf(expected, sizeof(expected), "ACK #%08lX", (unsigned long)nonce);
+
+    for (int attempt = 1; attempt <= ACK_RETRIES; attempt++) {
+        Serial.print("Sende Ereignis (Versuch ");
+        Serial.print(attempt);
+        Serial.print("): ");
+        Serial.println(msg);
+        sendEncrypted(msg);
+
+        String reply;
+        if (receiveDecrypted(ACK_WAIT_MS, reply) && reply == String(expected)) {
+            Serial.println("Quittung vom Gateway empfangen");
+            return true;
+        }
+        Serial.println("Keine Quittung erhalten");
+    }
+    Serial.println("Fehler: Ereignis blieb unbestaetigt, Wiederholung im naechsten Zyklus");
+    return false;
+}
+
+// ------------------------------------------------------------
 // SYNC-Paket: macht dem Gateway die Flags, die Akkuspannung und
 // die Distanz bekannt (loest dort keine E-Mail aus)
 // ------------------------------------------------------------
@@ -118,38 +201,19 @@ static void sendSync(float voltage, uint16_t distance) {
 // Rueckgabe: true wenn ein Flag-Reset ausgefuehrt wurde.
 // ------------------------------------------------------------
 static bool listenForCommand() {
-    rx_flag = false;
-    radio.setDio1Action(onLoraReceive);
-    if (radio.startReceive() != RADIOLIB_ERR_NONE) {
+    String decoded;
+    if (!receiveDecrypted(RX_WINDOW_MS, decoded)) {
         return false;
     }
 
-    uint32_t start = millis();
-    while (millis() - start < RX_WINDOW_MS && !rx_flag) {
-        delay(5);
+    if (decoded == "CMD RESET FLAGS") {
+        Serial.println("Kommando empfangen: Flags werden zurueckgesetzt");
+        mail_state = 0;
+        batt_state = 0;
+        return true;
     }
-
-    bool did_reset = false;
-    if (rx_flag) {
-        uint8_t payload[80];
-        size_t len = radio.getPacketLength();
-        if (len > sizeof(payload)) len = sizeof(payload);
-        if (radio.readData(payload, len) == RADIOLIB_ERR_NONE && len > 0) {
-            String decoded = crypto.decrypt(payload, len);
-            if (decoded == "CMD RESET FLAGS") {
-                Serial.println("Kommando empfangen: Flags werden zurueckgesetzt");
-                mail_state = 0;
-                batt_state = 0;
-                did_reset = true;
-            } else if (decoded.length() > 0) {
-                Serial.println("Unbekanntes Kommando verworfen");
-            }
-        }
-    }
-
-    radio.clearDio1Action();
-    radio.standby();
-    return did_reset;
+    Serial.println("Unbekanntes Kommando verworfen");
+    return false;
 }
 
 // ------------------------------------------------------------
@@ -226,7 +290,9 @@ void setup() {
     radio.setCurrentLimit(60.0);
     radio.setCRC(true);
 
-    // 1. Akkuzustand mit Hysterese auswerten
+    // 1. Akkuzustand mit Hysterese auswerten.
+    // Das Flag wird erst nach quittierter Zustellung gesetzt, ein
+    // unbestaetigtes Ereignis wird im naechsten Zyklus wiederholt.
     float voltage = readBatteryVoltage();
     Serial.print("Gemessene Spannung ");
     Serial.print(voltage, 2);
@@ -234,14 +300,15 @@ void setup() {
 
     if (batt_state == 0 && voltage < BATT_THRESH_LOW) {
         Serial.println("Alarm: Spannung kritisch niedrig, starte Uebertragung");
-        sendEncrypted("STATUS BATTERY LOW");
-        batt_state = 1;
+        if (sendWithAck("STATUS BATTERY LOW")) {
+            batt_state = 1;
+        }
     } else if (batt_state == 1 && voltage > BATT_THRESH_HIGH) {
         Serial.println("Info: Spannung erholt, setze Zustand zurueck");
         batt_state = 0;
     }
 
-    // 2. Briefkastenzustand mit Hysterese auswerten
+    // 2. Briefkastenzustand mit Hysterese auswerten (gleiche Logik)
     uint16_t distance = 0;
     if (tof_ok) {
         distance = tof_sensor.readRangeSingleMillimeters();
@@ -255,8 +322,9 @@ void setup() {
 
             if (mail_state == 0 && distance < DIST_THRESH_FULL) {
                 Serial.println("Alarm: Distanzschwelle unterschritten, starte Uebertragung");
-                sendEncrypted("STATUS NEW MAIL");
-                mail_state = 1;
+                if (sendWithAck("STATUS NEW MAIL")) {
+                    mail_state = 1;
+                }
             } else if (mail_state == 1 && distance > DIST_THRESH_EMPTY) {
                 Serial.println("Info: Distanz wiederhergestellt, setze Zustand zurueck");
                 mail_state = 0;
@@ -267,6 +335,7 @@ void setup() {
     // 3. SYNC-Paket mit aktuellem Zustand an das Gateway senden.
     // Es dient dem Portal (Flags, Akkuspannung, Distanz) und oeffnet
     // zugleich das Zeitfenster fuer ferngesteuerte Kommandos.
+    // Bewusst ohne Handshake: SYNC wird stuendlich erneuert.
     sendSync(voltage, distance);
 
     // 4. Kurzes Empfangsfenster fuer ein vorgemerktes Reset-Kommando
