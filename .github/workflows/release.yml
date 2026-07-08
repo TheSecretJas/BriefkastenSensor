@@ -1,0 +1,51 @@
+name: Release
+
+# Wird ausgeloest, wenn ein Versions-Tag gepusht wird, z. B. v2.1.0.
+# Baut die Firmware und haengt die .bin-Dateien an einen GitHub Release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Schreibrecht, damit der Release erstellt werden kann
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: PlatformIO installieren
+        run: pip install --upgrade platformio
+
+      - name: Firmware bauen (Sender und Gateway)
+        # Nur die eigentliche Firmware wird veroeffentlicht. Die
+        # Provision-Umgebung braucht echte Zugangsdaten und wird
+        # bewusst nicht als Release-Artefakt gebaut.
+        run: |
+          pio run -d firmware -e sender
+          pio run -d firmware -e gateway
+
+      - name: Binaerdateien sammeln und benennen
+        run: |
+          mkdir -p release
+          cp firmware/.pio/build/sender/firmware.bin  release/briefkastensensor-sender-${{ github.ref_name }}.bin
+          cp firmware/.pio/build/gateway/firmware.bin release/briefkastensensor-gateway-${{ github.ref_name }}.bin
+
+      - name: GitHub Release erstellen
+        uses: softprops/action-gh-release@v2
+        with:
+          # Nutzt den passenden Abschnitt aus der CHANGELOG.md als
+          # Release-Text, falls vorhanden; sonst generiert GitHub
+          # eine Notiz aus den Commits.
+          generate_release_notes: true
+          files: release/*.bin

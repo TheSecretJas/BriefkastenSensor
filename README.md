@@ -1,119 +1,154 @@
-# Installationsanleitung
+# Briefkastensensor
 
-Diese Dokumentation beschreibt die Einrichtung der Entwicklungsumgebung für das Projekt.
-
-## 1. Basiskomponenten
-
-Installiere die folgenden Standard-Werkzeuge, sofern noch nicht vorhanden:
-
-1. **Git:** [git-scm.com](https://git-scm.com/downloads) (Wähle während der Installation "Use Git from the Windows Command Prompt").
-2. **GitHub Desktop:** [desktop.github.com/download/](https://desktop.github.com/download/) (Empfohlen für den einfachen und grafischen Git-Workflow).
-3. **Python:** Installiere eine Python Distribution deiner Wahl.
+Ein batteriebetriebener Sensor meldet Posteinwürfe per LoRa-Funk an ein
+Gateway im Haus, das daraufhin eine E-Mail versendet und den Systemzustand
+in einem lokalen Web-Portal bereitstellt. Das Projekt umfasst die komplette
+Firmware (C++ / PlatformIO), die CAD-Modelle des Sensorhalters und den
+fertigen G-Code für den 3D-Druck.
 
 ---
 
-## 2. Python-Umgebung & Thonny IDE Setup
+## Funktionsweise
 
-Um Paketkonflikte zu vermeiden und eine saubere Entwicklungsumgebung für die Programmierung des Sensors zu gewährleisten, nutzen wir eine isolierte Umgebung innerhalb von Miniforge.
+Der Sender sitzt im Briefkasten und misst ein Mal pro Stunde per
+Time-of-Flight-Sensor die Distanz zur Rückwand. Fällt die Distanz unter
+65 mm, liegt ein Brief im Kasten: der Sender schickt eine
+AES-verschlüsselte Meldung an das Gateway, das eine E-Mail an die
+hinterlegten Empfänger versendet. Steigt die Distanz wieder über 75 mm
+(Kasten geleert), setzt sich der Zustand automatisch zurück (Hysterese,
+verhindert Mehrfachmeldungen). Analog überwacht der Sender seine
+Akkuspannung (Warnung unter 3.45 V, Rücksetzen über 3.60 V).
 
-1. Öffne den **Miniforge Prompt** über das Windows-Startmenü.
-2. Erstelle ein neues Environment mit Python und Pip:
-   ```bash
-   conda create -n thonny_env python=3.12 pip -y
-   ```
-3. Aktiviere das Environment:
-   ```bash
-   conda activate thonny_env
-   
-   ```
-4. Installiere Thonny innerhalb dieses Environments:
-   ```bash
-   python -m pip install thonny
-   
-   ```
-5. **Starten der IDE:** Um Thonny zu nutzen, öffne den Miniforge Prompt und gib folgende Befehle ein:
-   ```bash
-   conda activate thonny_env
-   thonny
-   
-   ```
+Zusätzlich sendet der Sender bei jedem Aufwachen ein SYNC-Paket mit
+Flags, Akkuspannung und Distanz. Das Gateway zeigt diese Werte zusammen
+mit dem Raumklima in einem Web-Portal unter http://briefkastensensor.local/
+an. Über das Portal lassen sich WLAN-, SMTP- und Empfänger-Einstellungen
+ändern sowie die Sender-Flags ferngesteuert zurücksetzen: Nach jedem
+SYNC lauscht der Sender zwei Sekunden auf Kommandos, das Gateway stellt
+vorgemerkte Befehle in genau diesem Fenster zu (Class-A-Prinzip).
 
----
+## Hardware
 
-## 3. Git-Ersteinrichtung & Konfiguration
+| Komponente | Funktion |
+|---|---|
+| Heltec Wireless Stick Lite V3 (ESP32-S3, SX1262, 868 MHz) | Sender im Briefkasten |
+| Heltec WiFi LoRa 32 V3 (ESP32-S3, SX1262, OLED, 868 MHz) | Gateway im Haus |
+| M5Stack Mini ToF Unit, 90 Grad (VL53L0X) | Distanzmessung zur Briefkasten-Rückwand |
+| Waveshare BME280 | Raumklima am Gateway (Temperatur, Luftfeuchte) |
+| Heltec 800 mAh LiPo 802540, 3.7 V | Stromversorgung des Senders |
 
-Damit Git deine Änderungen korrekt zuordnen kann, müssen Name und E-Mail hinterlegt werden. Bei Nutzung von GitHub Desktop erfolgt dies meist automatisch bei der Anmeldung. Alternativ öffne ein Terminal (z. B. in VS Code oder den Miniforge Prompt) und führe aus:
+### Pinbelegung
 
-```bash
-git config --global user.name "Dein Vor- und Nachname"
-git config --global user.email "deine.email@beispiel.de"
+Beide Boards nutzen den gleichen SX1262-Anschluss: SPI an GPIO 8 (CS),
+9 (SCK), 10 (MOSI), 11 (MISO), dazu DIO1 an 14, RST an 12, BUSY an 13.
+Die Peripheriespannung (Vext, aktiv LOW) liegt auf GPIO 36.
+
+Sender: VL53L0X per I2C an GPIO 41 (SDA) / 42 (SCL). Akkumessung über
+GPIO 1 (ADC) mit Spannungsteiler-Freigabe an GPIO 37 und Teilerfaktor 4.9.
+
+Gateway: OLED per I2C an GPIO 17 (SDA) / 18 (SCL), Reset an 21. BME280
+(Adresse 0x77) am zweiten I2C-Bus an GPIO 41 / 42.
+
+### Funkparameter
+
+868 MHz, Bandbreite 125 kHz, Spreading Factor 9, Coding Rate 4/8,
+Syncword 0x12 (privat), Sendeleistung -5 dBm, CRC aktiv. Alle Pakete sind
+AES-128-CBC-verschlüsselt (Paketformat: 16 Byte Zufalls-IV plus
+Ciphertext mit PKCS7-Padding).
+
+## Mechanik: Sensorhalter (3D-Druck)
+
+Der Halter ist zweiteilig aufgebaut:
+
+1. **Aufnahme** (Briefkastensensorikaufnahme): wird fest in den
+   Briefkasten eingeklebt und bleibt dauerhaft montiert.
+2. **Deckel** (Briefkastendeckel): herausnehmbarer Einsatz, der die
+   komplette Elektronik trägt: ToF-Sensor, Wireless Stick Lite V3 und
+   den Akku. Zum Laden oder Flashen wird nur der Deckel entnommen, die
+   verklebte Aufnahme bleibt im Kasten.
+
+Der ToF-Sensor sitzt dank der 90-Grad-Bauform der M5Stack-Einheit flach
+im Deckel und misst parallel zum Briefkastenboden auf die Rückwand.
+
+Dateien im Ordner `CAD_Model/`:
+
+| Datei | Inhalt |
+|---|---|
+| Briefkastensensorikaufnahme.CATPart | Aufnahme, CATIA-Quellmodell |
+| Briefkastendeckel.CATPart | Deckel, CATIA-Quellmodell |
+| Briefkastensensor.stl / Briefkastendeckel.stl | Exportierte Druckdaten |
+| Zusammenbau.CATProduct / Product1.CATProduct | CATIA-Baugruppen beider Teile |
+
+Im Ordner `3D_Print_GCode/` liegt fertig gesliceter G-Code für beide
+Teile (Profil AI3MSPRO). Für andere Drucker die STL-Dateien mit dem
+eigenen Slicer neu aufbereiten.
+
+## Ordnerstruktur
+
+```
+.
+|-- firmware/               C++ Firmware (PlatformIO-Projekt)
+|   |-- src/sender/     Firmware Sendemodul
+|   |-- src/gateway/    Firmware Gateway (SMTP, Web-Portal)
+|   |-- src/common/     Gemeinsame Module (AES, NVS)
+|   |-- src/provision/  Einmalige Zugangsdaten-Provisionierung
+|   |-- README.md       Technische Details der Firmware
+|   `-- ANLEITUNG.md    Schritt-für-Schritt: Setup und Flashen
+|-- hardware/
+|   |-- CAD_Model/          CATIA-Modelle und STL-Exporte des Halters
+|   |-- 3D_Print_GCode/     Gesliceter G-Code für beide Druckteile
+|-- docs/
 ```
 
-* **VS Code Extensions:** Die "Git Base" Extension ist standardmäßig aktiv. Für eine bessere Übersicht sind "GitHub Pull Requests" & "GitLens" empfehlenswert.
-* **Authentifizierung:** Beim ersten Hochladen öffnet sich in der Regel automatisch ein Browserfenster zur Anmeldung ("Sign in with GitHub").
+## Software im Überblick
 
----
+Die Firmware ist als PlatformIO-Projekt mit drei Umgebungen organisiert:
 
-## 4. Projekt-Setup
+- `sender`: Deep-Sleep-Zyklus (1 h), Messung, Ereignis- und SYNC-Versand,
+  2-Sekunden-Empfangsfenster für Gateway-Kommandos. Zustandsflags liegen
+  im RTC-RAM; ein Power-Cycle setzt sie zurück.
+- `gateway`: LoRa-Empfang per Interrupt, E-Mail-Versand über Gmail
+  (Port 465, TLS mit Zertifikatsprüfung gegen GTS Root R1, NTP-Zeitsync),
+  OLED-Anzeige, Web-Portal mit mDNS, Task-Watchdog.
+- `provision`: liest die lokale `.env` beim Kompilieren ein und schreibt
+  die Zugangsdaten einmalig in den NVS des jeweiligen Chips.
 
-Verknüpfe dein lokales Arbeitsverzeichnis mit dem Projekt-Repository.
+Verwendete Bibliotheken: RadioLib (SX1262), Adafruit SSD1306/GFX/BME280,
+Pololu VL53L0X, mbedtls (AES, im ESP32-Framework enthalten).
 
-**Option A: Über GitHub Desktop (Empfohlen)**
-1. Gehe in GitHub Desktop auf `File` > `Clone repository...`.
-2. Wähle den Tab `URL` und füge den Link ein: `https://github.com/TheSecretJas/BriefkastenSensor`
-3. Wähle deinen lokalen Zielordner aus und klicke auf `Clone`.
-4. Öffne den resultierenden Ordner anschließend in VS Code (`Datei` > `Ordner öffnen...`).
+## Sicherheit
 
-**Option B: Über das Terminal (Alternativ)**
-1. Erstelle einen lokalen Ordner für deine Projekte.
-2. Klone das **Briefkastensensor** Repository:
-   ```bash
-   git clone [https://github.com/TheSecretJas/BriefkastenSensor](https://github.com/TheSecretJas/BriefkastenSensor)
-   
-   ```
-3. Öffne den Ordner in gewünschter SW, um Änderungen vorzunehmen:
-   * `Datei` > `Ordner öffnen...` > Wähle den Ordner `BriefkastenSensor` aus.
+- Alle Funkpakete sind AES-128-CBC-verschlüsselt; der Schlüssel wird
+  ausschließlich per `.env`-Provisionierung gesetzt und ist bewusst
+  nicht über das Web-Portal änderbar.
+- Der SMTP-Versand prüft das Gmail-Zertifikat gegen das eingebettete
+  Google-Root-Zertifikat (gültig bis 2036).
+- Das Web-Portal ist per HTTP Basic Auth geschützt (PORTAL_PASS in der
+  `.env`); gespeicherte Passwörter werden nie angezeigt.
+- Bekannte Einschränkung: das Funkprotokoll enthält keinen
+  Replay-Schutz. Ein mitgeschnittenes Paket könnte erneut gesendet
+  werden und löst schlimmstenfalls eine überflüssige E-Mail oder ein
+  Flag-Reset aus.
 
+## Inbetriebnahme
 
----
+Die vollständige Anleitung (PlatformIO-Setup, Flash-Erase, Provisionierung,
+Flashen, Funktionstests, Fehlerbehebung) steht in `docs/ANLEITUNG.md`.
+Kurzfassung:
 
-## 5. Git-Workflow
+```
+cd firmware
+cp .env.example .env          # Werte eintragen
+pio run -e provision -t erase # pro Board: Flash löschen
+pio run -e provision -t upload
+pio run -e gateway -t upload  # bzw. -e sender
+```
 
-Da die Arbeit mit der Konsole im Entwicklungs-Alltag schnell unübersichtlich wird, ist **GitHub Desktop** die empfohlene Alternative.
+## Betrieb
 
-### 5.1 Workflow mit GitHub Desktop (Empfohlen)
-
-1. **Stand synchronisieren:** Klicke oben in der Leiste auf **"Fetch origin"** (und anschließend auf **"Pull origin"**, falls neue Änderungen vorhanden sind), um vor Arbeitsbeginn den aktuellen Stand vom Server zu laden.
-2. **Feature-Branch erstellen:** Klicke oben auf **"Current Branch"** -> **"New Branch"**. Gib einen passenden Namen ein (z. B. `feature/name-der-anpassung`) und erstelle den Branch basierend auf `main`.
-3. **Änderungen committen:** 
-   * Prüfe in der linken Spalte die geänderten Dateien und wähle nur die aus, die wirklich Teil deiner Änderung sind.
-   * Gib unten links unter **"Summary"** eine kurze, prägnante Beschreibung der Änderung ein.
-   * Klicke auf den blauen Button **"Commit to [Branch-Name]"**.
-4. **Branch aktuell halten:** Bei längerer Bearbeitungsdauer im oberen Menü auf **"Branch"** -> **"Merge into current branch..."** gehen, `main` auswählen und bestätigen, um Konflikte frühzeitig zu lösen.
-5. **Push & Pull Request:** Klicke oben auf **"Publish branch"** (oder **"Push origin"**). Danach erscheint ein Button **"Create Pull Request"**, der dich direkt zu GitHub weiterleitet, um deine Änderungen einzureichen.
-
-### 5.2 Workflow über die Konsole (Alternativ)
-
-1. **Stand synchronisieren:**
-   ```bash
-   git pull origin main
-   ```
-2. **Feature-Branch erstellen:**
-   ```bash
-   git switch -c feature/name-der-anpassung
-   ```
-3. **Änderungen committen:** (Vorab den Status prüfen)
-   ```bash
-   git status
-   git add .
-   git commit -m "Kurze, prägnante Beschreibung der Änderung"
-   ```
-4. **Branch aktuell halten:**
-   ```bash
-   git merge main
-   ```
-5. **Push & Pull Request:**
-   ```bash
-   git push origin feature/name-der-anpassung
-   
-   ```
+- Der Sender meldet sich stündlich; "Letzter Kontakt" im Portal sollte
+  60 Minuten nicht deutlich überschreiten.
+- Akku laden: Deckel aus der Aufnahme nehmen, Akku bzw. Board per USB
+  laden, Deckel wieder einsetzen und einmal RST drücken.
+- Ein Flag-Reset über das Portal wird beim nächsten stündlichen
+  Kontakt zugestellt.
