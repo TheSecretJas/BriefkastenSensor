@@ -41,8 +41,8 @@ static const int PIN_LORA_BUSY = 13;
 // ------------------------------------------------------------
 // Schwellwerte und Zeiten (identisch zur MicroPython-Version)
 // ------------------------------------------------------------
-static const uint16_t DIST_THRESH_FULL  = 68;   // mm, Brief erkannt
-static const uint16_t DIST_THRESH_EMPTY = 75;   // mm, Kasten geleert
+static const uint16_t DIST_THRESH_FULL  = 58;   // mm, Brief erkannt
+static const uint16_t DIST_THRESH_EMPTY = 60;   // mm, Kasten geleert
 static const float    BATT_THRESH_LOW   = 3.45; // V, Warnung ausloesen
 static const float    BATT_THRESH_HIGH  = 3.60; // V, Warnung zuruecksetzen
 static const uint64_t SLEEP_US          = 3600ULL * 1000000ULL; // 1 Stunde
@@ -280,5 +280,9 @@ void setup() {
 }
 
 void loop() {
-    // Wird nie erreicht, das Geraet erwacht stets neu aus dem Deep Sleep
+    // Wird nur erreicht, wenn der Deep Sleep nicht betreten wurde.
+    // Sicherheitshalber erneut versuchen statt still zu haengen.
+    Serial.println("Warnung: Deep Sleep nicht betreten, erneuter Versuch");
+    delay(1000);
+    enterDeepSleep();
 }
