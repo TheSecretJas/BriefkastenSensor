@@ -1,84 +1,152 @@
-# Briefkastensensor (C++ / PlatformIO)
+# Briefkastensensor
 
-Portierung des MicroPython-Projekts auf C++ (Arduino-Framework, PlatformIO). Der Wechsel reduziert den RAM-Bedarf deutlich, da kein Interpreter, kein Heap-Garbage-Collector und keine Bytecode-Strukturen mehr benoetigt werden. Die Funkschnittstelle, das Verschluesselungsformat und die NVS-Schluessel sind zur MicroPython-Version vollstaendig kompatibel.
+Ein batteriebetriebener Sensor meldet Posteinwürfe per LoRa-Funk an ein
+Gateway im Haus, das daraufhin eine E-Mail versendet und den Systemzustand
+in einem lokalen Web-Portal bereitstellt. Das Projekt umfasst die komplette
+Firmware (C++ / PlatformIO), die CAD-Modelle des Sensorhalters und den
+fertigen G-Code für den 3D-Druck.
 
-Hinweis: Dokumentation und Kommentare wurden mit Unterstuetzung von kuenstlicher Intelligenz (Claude, Anthropic) erstellt.
+---
 
-## Architektur
+## Funktionsweise
 
-Sender (Heltec Wireless Stick Lite V3, im Briefkasten):
-stuendlicher Deep-Sleep-Zyklus, Messung der Akkuspannung (GPIO 1, Teilerfaktor 4.9, Hysterese 3.45 V / 3.60 V) und der Distanz zur Rueckwand per VL53L0X (I2C an GPIO 41/42, Hysterese 65 mm / 75 mm). Bei einem Ereignis wird eine AES-128-CBC-verschluesselte Nachricht per SX1262 gesendet (868 MHz, SF9, BW 125 kHz, CR 4/8, Syncword 0x12, -5 dBm). Die Zustandsflags liegen im RTC-RAM und ueberleben den Deep Sleep.
+Der Sender sitzt im Briefkasten und misst ein Mal pro Stunde per
+Time-of-Flight-Sensor die Distanz zur Rückwand. Fällt die Distanz unter
+65 mm, liegt ein Brief im Kasten: der Sender schickt eine
+AES-verschlüsselte Meldung an das Gateway, das eine E-Mail an die
+hinterlegten Empfänger versendet. Steigt die Distanz wieder über 75 mm
+(Kasten geleert), setzt sich der Zustand automatisch zurück (Hysterese,
+verhindert Mehrfachmeldungen). Analog überwacht der Sender seine
+Akkuspannung (Warnung unter 3.45 V, Rücksetzen über 3.60 V).
 
-Gateway (Heltec WiFi LoRa 32 V3):
-WLAN-Anbindung, nicht blockierender LoRa-Empfang per DIO1-Interrupt, Entschluesselung und Versand einer E-Mail ueber Gmail (Port 465, bis zu fuenf Versuche). Das OLED zeigt Raumklima (BME280 an GPIO 41/42, Adresse 0x77) und den Systemstatus. Ein Task-Watchdog (15 s) ueberwacht die Hauptschleife und wird waehrend des SMTP-Versands mitgefuettert.
+Zusätzlich sendet der Sender bei jedem Aufwachen ein SYNC-Paket mit
+Flags, Akkuspannung und Distanz. Das Gateway zeigt diese Werte zusammen
+mit dem Raumklima in einem Web-Portal unter http://briefkastensensor.local/
+an. Über das Portal lassen sich WLAN-, SMTP- und Empfänger-Einstellungen
+ändern sowie die Sender-Flags ferngesteuert zurücksetzen: Nach jedem
+SYNC lauscht der Sender zwei Sekunden auf Kommandos, das Gateway stellt
+vorgemerkte Befehle in genau diesem Fenster zu (Class-A-Prinzip).
 
-## Projektstruktur
+## Hardware
+
+| Komponente | Funktion |
+|---|---|
+| Heltec Wireless Stick Lite V3 (ESP32-S3, SX1262, 868 MHz) | Sender im Briefkasten |
+| Heltec WiFi LoRa 32 V3 (ESP32-S3, SX1262, OLED, 868 MHz) | Gateway im Haus |
+| M5Stack Mini ToF Unit, 90 Grad (VL53L0X) | Distanzmessung zur Briefkasten-Rückwand |
+| Waveshare BME280 | Raumklima am Gateway (Temperatur, Luftfeuchte) |
+| Heltec 800 mAh LiPo 802540, 3.7 V | Stromversorgung des Senders |
+
+### Pinbelegung
+
+Beide Boards nutzen den gleichen SX1262-Anschluss: SPI an GPIO 8 (CS),
+9 (SCK), 10 (MOSI), 11 (MISO), dazu DIO1 an 14, RST an 12, BUSY an 13.
+Die Peripheriespannung (Vext, aktiv LOW) liegt auf GPIO 36.
+
+Sender: VL53L0X per I2C an GPIO 41 (SDA) / 42 (SCL). Akkumessung über
+GPIO 1 (ADC) mit Spannungsteiler-Freigabe an GPIO 37 und Teilerfaktor 4.9.
+
+Gateway: OLED per I2C an GPIO 17 (SDA) / 18 (SCL), Reset an 21. BME280
+(Adresse 0x77) am zweiten I2C-Bus an GPIO 41 / 42.
+
+### Funkparameter
+
+868 MHz, Bandbreite 125 kHz, Spreading Factor 9, Coding Rate 4/8,
+Syncword 0x12 (privat), Sendeleistung -5 dBm, CRC aktiv. Alle Pakete sind
+AES-128-CBC-verschlüsselt (Paketformat: 16 Byte Zufalls-IV plus
+Ciphertext mit PKCS7-Padding).
+
+## Mechanik: Sensorhalter (3D-Druck)
+
+Der Halter ist zweiteilig aufgebaut:
+
+1. **Aufnahme** (Briefkastensensorikaufnahme): wird fest in den
+   Briefkasten eingeklebt und bleibt dauerhaft montiert.
+2. **Deckel** (Briefkastendeckel): herausnehmbarer Einsatz, der die
+   komplette Elektronik trägt: ToF-Sensor, Wireless Stick Lite V3 und
+   den Akku. Zum Laden oder Flashen wird nur der Deckel entnommen, die
+   verklebte Aufnahme bleibt im Kasten.
+
+Der ToF-Sensor sitzt dank der 90-Grad-Bauform der M5Stack-Einheit flach
+im Deckel und misst parallel zum Briefkastenboden auf die Rückwand.
+
+Dateien im Ordner `CAD_Model/`:
+
+| Datei | Inhalt |
+|---|---|
+| Briefkastensensorikaufnahme.CATPart | Aufnahme, CATIA-Quellmodell |
+| Briefkastendeckel.CATPart | Deckel, CATIA-Quellmodell |
+| Briefkastensensor.stl / Briefkastendeckel.stl | Exportierte Druckdaten |
+| Zusammenbau.CATProduct / Product1.CATProduct | CATIA-Baugruppen beider Teile |
+
+Im Ordner `3D_Print_GCode/` liegt fertig gesliceter G-Code für beide
+Teile (Profil AI3MSPRO). Für andere Drucker die STL-Dateien mit dem
+eigenen Slicer neu aufbereiten.
+
+## Ordnerstruktur
 
 ```
-platformio.ini            Umgebungen: sender, gateway, provision
-.env.example              Vorlage fuer Zugangsdaten
-scripts/load_env.py       Liest .env fuer die Provisionierung ein
-src/common/               Gemeinsame Module (NVS, AES)
-src/sender/               Firmware Sendemodul
-src/gateway/              Firmware Gateway inkl. SMTP-Client
-src/provision/            Einmalige NVS-Provisionierung (ersetzt setup_NVS.py)
+.
+|-- Code/               C++ Firmware (PlatformIO-Projekt)
+|   |-- src/sender/     Firmware Sendemodul
+|   |-- src/gateway/    Firmware Gateway (SMTP, Web-Portal)
+|   |-- src/common/     Gemeinsame Module (AES, NVS)
+|   |-- src/provision/  Einmalige Zugangsdaten-Provisionierung
+|   |-- README.md       Technische Details der Firmware
+|   `-- ANLEITUNG.md    Schritt-für-Schritt: Setup und Flashen
+|-- CAD_Model/          CATIA-Modelle und STL-Exporte des Halters
+`-- 3D_Print_GCode/     Gesliceter G-Code für beide Druckteile
 ```
+
+## Software im Überblick
+
+Die Firmware ist als PlatformIO-Projekt mit drei Umgebungen organisiert:
+
+- `sender`: Deep-Sleep-Zyklus (1 h), Messung, Ereignis- und SYNC-Versand,
+  2-Sekunden-Empfangsfenster für Gateway-Kommandos. Zustandsflags liegen
+  im RTC-RAM; ein Power-Cycle setzt sie zurück.
+- `gateway`: LoRa-Empfang per Interrupt, E-Mail-Versand über Gmail
+  (Port 465, TLS mit Zertifikatsprüfung gegen GTS Root R1, NTP-Zeitsync),
+  OLED-Anzeige, Web-Portal mit mDNS, Task-Watchdog.
+- `provision`: liest die lokale `.env` beim Kompilieren ein und schreibt
+  die Zugangsdaten einmalig in den NVS des jeweiligen Chips.
+
+Verwendete Bibliotheken: RadioLib (SX1262), Adafruit SSD1306/GFX/BME280,
+Pololu VL53L0X, mbedtls (AES, im ESP32-Framework enthalten).
+
+## Sicherheit
+
+- Alle Funkpakete sind AES-128-CBC-verschlüsselt; der Schlüssel wird
+  ausschließlich per `.env`-Provisionierung gesetzt und ist bewusst
+  nicht über das Web-Portal änderbar.
+- Der SMTP-Versand prüft das Gmail-Zertifikat gegen das eingebettete
+  Google-Root-Zertifikat (gültig bis 2036).
+- Das Web-Portal ist per HTTP Basic Auth geschützt (PORTAL_PASS in der
+  `.env`); gespeicherte Passwörter werden nie angezeigt.
+- Bekannte Einschränkung: das Funkprotokoll enthält keinen
+  Replay-Schutz. Ein mitgeschnittenes Paket könnte erneut gesendet
+  werden und löst schlimmstenfalls eine überflüssige E-Mail oder ein
+  Flag-Reset aus.
 
 ## Inbetriebnahme
 
-1. `.env.example` als `.env` kopieren und Werte eintragen. Der AES-Schluessel muss exakt 16 Zeichen lang sein.
+Die vollständige Anleitung (PlatformIO-Setup, Flash-Erase, Provisionierung,
+Flashen, Funktionstests, Fehlerbehebung) steht in `Code/ANLEITUNG.md`.
+Kurzfassung:
 
-2. Flash der Chips vollstaendig loeschen. Das ist wichtig, weil die Partitionstabelle von MicroPython nicht mit der Arduino-Tabelle uebereinstimmt und alte NVS-Reste sonst zu undefiniertem Verhalten fuehren koennen:
-   ```
-   pio run -e provision -t erase
-   ```
+```
+cd Code
+cp .env.example .env          # Werte eintragen
+pio run -e provision -t erase # pro Board: Flash löschen
+pio run -e provision -t upload
+pio run -e gateway -t upload  # bzw. -e sender
+```
 
-3. Provisionierung auf beide Chips flashen und die serielle Ausgabe pruefen:
-   ```
-   pio run -e provision -t upload
-   pio device monitor
-   ```
-   Erwartete Ausgabe: "Zugangsdaten erfolgreich im NVS gespeichert".
+## Betrieb
 
-4. Eigentliche Firmware flashen (die NVS-Daten bleiben dabei erhalten):
-   ```
-   pio run -e sender -t upload    # Chip im Briefkasten
-   pio run -e gateway -t upload   # Gateway
-   ```
-
-## Web-Portal
-
-Das Gateway stellt im LAN ein Web-Portal unter http://briefkastensensor.local/ bereit (alternativ ueber die IP-Adresse, siehe serielle Ausgabe). Es zeigt:
-
-- Zustand des Sendemoduls: Brief-Flag, Akku-Warnflag, Akkuspannung, gemessene Distanz und Zeitpunkt des letzten Kontakts
-- Raumklima des Gateways (BME280) und die aktuelle Statuszeile
-- Button "Sender-Flags zuruecksetzen" fuer den ferngesteuerten Reset
-- Konfigurationsformular fuer WLAN, SMTP und Empfaenger
-
-Das initiale Setup laeuft ausschliesslich ueber die .env Provisionierung. Danach koennen die Werte im Portal geaendert werden; nach dem Speichern startet das Gateway neu. Sicherheitsregeln des Portals:
-
-- Gespeicherte Passwoerter werden niemals angezeigt (Schreibfelder, leer = unveraendert)
-- Der AES-Schluessel ist nicht ueber das Portal aenderbar, nur per .env
-- Mit PORTAL_PASS in der .env wird das Portal per HTTP Basic Auth geschuetzt (Benutzer: admin). Ohne Passwort ist das Portal fuer jeden im LAN offen.
-
-## Funkprotokoll und ferngesteuerter Flag-Reset
-
-Der Sender schlaeft fast durchgehend, das Gateway kann ihm daher nichts direkt zustellen. Geloest wird das Class-A-artig:
-
-1. Der Sender sendet bei jedem Aufwachen (stuendlich) ein verschluesseltes SYNC-Paket: `SYNC <mail_flag>,<batt_flag>,<spannung>,<distanz>`. Das Gateway aktualisiert damit das Portal, versendet aber keine E-Mail. Flag-Aenderungen und der Akkustatus sind so automatisch stuendlich im Portal sichtbar (uebererfuellt die 24-h-Anforderung bei minimalen Energiekosten von rund 150 ms Sendezeit plus 2 s Empfangsfenster pro Stunde).
-2. Nach dem SYNC lauscht der Sender 2 Sekunden auf Kommandos.
-3. Ein Klick auf den Reset-Button merkt das Kommando im Gateway vor. Beim naechsten SYNC wird `CMD RESET FLAGS` verschluesselt zugestellt, der Sender setzt beide Flags auf null und bestaetigt mit einem weiteren SYNC. Wirksamkeit somit in maximal einer Stunde.
-4. Ereignisnachrichten (`STATUS NEW MAIL`, `STATUS BATTERY LOW`) loesen weiterhin E-Mails aus. Der Versand wird kurz aufgeschoben, bis der Paket-Burst des Senders abgearbeitet ist, damit das Reset-Kommando das Empfangsfenster nicht verpasst.
-
-## Hinweise und Unterschiede zur MicroPython-Version
-
-- Zustandsspeicher: statt `rtc.memory()` mit String-Parsing werden `RTC_DATA_ATTR`-Variablen verwendet. Ein Power-Cycle (Akku ab und wieder an) setzt beide Flags auf null; das ersetzt `resett_flags.py`.
-- Board-Definition: fuer den Wireless Stick Lite V3 existiert in PlatformIO keine eigene Definition. Es wird die des WiFi LoRa 32 V3 verwendet, da beide Boards elektrisch identisch sind (ESP32-S3FN8, 8 MB Flash, gleiche SX1262-Pinbelegung).
-- TLS: der SMTP-Client prueft das Zertifikat von smtp.gmail.com per `setCACert()` gegen das eingebettete Google-Root-Zertifikat GTS Root R1 (gueltig bis 2036, siehe `src/gateway/gts_root_r1.h`). Dafuer synchronisiert das Gateway nach dem WLAN-Aufbau die Systemzeit per NTP; ohne gueltige Zeit schlaegt die Zertifikatspruefung fehl. Sollte Google die Kette wechseln, muss das Zertifikat aus https://pki.goog/repository/ aktualisiert werden.
-- Watchdog: die MicroPython-Version konnte waehrend eines langen SMTP-Versands theoretisch in den Watchdog-Reset laufen. Der C++-SMTP-Client fuettert den Watchdog daher aktiv mit.
-- Padding-Pruefung: das Gateway validiert das PKCS7-Padding vollstaendig, bevor eine Nachricht akzeptiert wird. Ungueltige oder fremde Pakete werden verworfen.
-- ADC: die Umrechnung `(raw / 4095) * 3.3 * 4.9` wurde beibehalten, damit die kalibrierten Schwellwerte gueltig bleiben. Genauer waere `analogReadMilliVolts()`, dann muessten die Schwellen aber neu vermessen werden.
-
-## Sicherheitshinweis
-
-Die `.env` Datei enthaelt Zugangsdaten und darf nicht eingecheckt werden (siehe `.gitignore`). Das Funkprotokoll bietet Vertraulichkeit, aber keinen Schutz gegen Replay-Angriffe: ein mitgeschnittenes Paket koennte erneut gesendet werden und loest dann eine E-Mail aus. Falls das relevant ist, kann ein Zaehler in die Nachricht aufgenommen werden, den das Gateway auf Monotonie prueft.
+- Der Sender meldet sich stündlich; "Letzter Kontakt" im Portal sollte
+  60 Minuten nicht deutlich überschreiten.
+- Akku laden: Deckel aus der Aufnahme nehmen, Akku bzw. Board per USB
+  laden, Deckel wieder einsetzen und einmal RST drücken.
+- Ein Flag-Reset über das Portal wird beim nächsten stündlichen
+  Kontakt zugestellt.

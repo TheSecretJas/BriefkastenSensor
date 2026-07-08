@@ -41,7 +41,7 @@ static const int PIN_LORA_BUSY = 13;
 // ------------------------------------------------------------
 // Schwellwerte und Zeiten (identisch zur MicroPython-Version)
 // ------------------------------------------------------------
-static const uint16_t DIST_THRESH_FULL  = 65;   // mm, Brief erkannt
+static const uint16_t DIST_THRESH_FULL  = 68;   // mm, Brief erkannt
 static const uint16_t DIST_THRESH_EMPTY = 75;   // mm, Kasten geleert
 static const float    BATT_THRESH_LOW   = 3.45; // V, Warnung ausloesen
 static const float    BATT_THRESH_HIGH  = 3.60; // V, Warnung zuruecksetzen
