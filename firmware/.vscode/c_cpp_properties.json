@@ -8,10 +8,10 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/Code/src",
-                "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/Code/.pio/libdeps/sender/VL53L0X",
+                "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/firmware/src",
+                "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/firmware/.pio/libdeps/sender/VL53L0X",
                 "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
-                "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/Code/.pio/libdeps/sender/RadioLib/src",
+                "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/firmware/.pio/libdeps/sender/RadioLib/src",
                 "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                 "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/newlib/platform_include",
                 "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/freertos/include",
@@ -248,10 +248,10 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/Code/src",
-                    "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/Code/.pio/libdeps/sender/VL53L0X",
+                    "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/firmware/src",
+                    "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/firmware/.pio/libdeps/sender/VL53L0X",
                     "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
-                    "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/Code/.pio/libdeps/sender/RadioLib/src",
+                    "C:/Users/jonas/OneDrive/Documents/CAD_Coding_Projekte/BriefkastenSensor/firmware/.pio/libdeps/sender/RadioLib/src",
                     "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                     "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/newlib/platform_include",
                     "C:/Users/jonas/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/freertos/include",
