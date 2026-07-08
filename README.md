@@ -87,15 +87,17 @@ eigenen Slicer neu aufbereiten.
 
 ```
 .
-|-- Code/               C++ Firmware (PlatformIO-Projekt)
+|-- firmware/               C++ Firmware (PlatformIO-Projekt)
 |   |-- src/sender/     Firmware Sendemodul
 |   |-- src/gateway/    Firmware Gateway (SMTP, Web-Portal)
 |   |-- src/common/     Gemeinsame Module (AES, NVS)
 |   |-- src/provision/  Einmalige Zugangsdaten-Provisionierung
 |   |-- README.md       Technische Details der Firmware
 |   `-- ANLEITUNG.md    Schritt-für-Schritt: Setup und Flashen
-|-- CAD_Model/          CATIA-Modelle und STL-Exporte des Halters
-`-- 3D_Print_GCode/     Gesliceter G-Code für beide Druckteile
+|-- hardware/
+|   |-- CAD_Model/          CATIA-Modelle und STL-Exporte des Halters
+|   |-- 3D_Print_GCode/     Gesliceter G-Code für beide Druckteile
+|-- docs/
 ```
 
 ## Software im Überblick
@@ -131,11 +133,11 @@ Pololu VL53L0X, mbedtls (AES, im ESP32-Framework enthalten).
 ## Inbetriebnahme
 
 Die vollständige Anleitung (PlatformIO-Setup, Flash-Erase, Provisionierung,
-Flashen, Funktionstests, Fehlerbehebung) steht in `Code/ANLEITUNG.md`.
+Flashen, Funktionstests, Fehlerbehebung) steht in `docs/ANLEITUNG.md`.
 Kurzfassung:
 
 ```
-cd Code
+cd firmware
 cp .env.example .env          # Werte eintragen
 pio run -e provision -t erase # pro Board: Flash löschen
 pio run -e provision -t upload

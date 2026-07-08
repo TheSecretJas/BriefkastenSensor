@@ -32,7 +32,7 @@ jobs:
           path: |
             ~/.platformio
             ~/.cache/pip
-          key: pio-${{ runner.os }}-${{ hashFiles('Code/platformio.ini') }}
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
       - name: PlatformIO installieren
@@ -44,7 +44,7 @@ jobs:
         # mit unkritischen Fake-Werten, nur damit der Build durchlaeuft.
         if: matrix.environment == 'provision'
         run: |
-          cat > Code/.env << 'EOF'
+          cat > firmware/.env << 'EOF'
           AES_MAIN=0000000000000000
           WIFI_SSID=ci-dummy
           WIFI_PASS=ci-dummy
@@ -55,4 +55,4 @@ jobs:
           EOF
 
       - name: Firmware bauen (${{ matrix.environment }})
-        run: pio run -d Code -e ${{ matrix.environment }}
+        run: pio run -d firmware -e ${{ matrix.environment }}
