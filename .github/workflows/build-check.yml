@@ -1,0 +1,58 @@
+name: Build Check
+
+# Baut die Firmware bei jedem Push auf main und bei Pull Requests,
+# damit Kompilierfehler sofort auffallen.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      # Alle Umgebungen bauen, auch wenn eine fehlschlaegt
+      fail-fast: false
+      matrix:
+        environment: [ sender, gateway, provision ]
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: PlatformIO und Abhaengigkeiten cachen
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('Code/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: PlatformIO installieren
+        run: pip install --upgrade platformio
+
+      - name: Dummy-.env fuer den Provision-Build erzeugen
+        # Die Provision-Umgebung liest per Pre-Build-Skript eine .env.
+        # In der CI existiert keine echte .env, daher hier Platzhalter
+        # mit unkritischen Fake-Werten, nur damit der Build durchlaeuft.
+        if: matrix.environment == 'provision'
+        run: |
+          cat > Code/.env << 'EOF'
+          AES_MAIN=0000000000000000
+          WIFI_SSID=ci-dummy
+          WIFI_PASS=ci-dummy
+          SMTP_USER=ci@example.com
+          SMTP_PASS=ci-dummy
+          RECIPIENTS=ci@example.com
+          PORTAL_PASS=ci-dummy
+          EOF
+
+      - name: Firmware bauen (${{ matrix.environment }})
+        run: pio run -d Code -e ${{ matrix.environment }}
