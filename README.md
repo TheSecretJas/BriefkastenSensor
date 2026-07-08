@@ -1,119 +1,84 @@
-# Installationsanleitung
+# Briefkastensensor (C++ / PlatformIO)
 
-Diese Dokumentation beschreibt die Einrichtung der Entwicklungsumgebung für das Projekt.
+Portierung des MicroPython-Projekts auf C++ (Arduino-Framework, PlatformIO). Der Wechsel reduziert den RAM-Bedarf deutlich, da kein Interpreter, kein Heap-Garbage-Collector und keine Bytecode-Strukturen mehr benoetigt werden. Die Funkschnittstelle, das Verschluesselungsformat und die NVS-Schluessel sind zur MicroPython-Version vollstaendig kompatibel.
 
-## 1. Basiskomponenten
+Hinweis: Dokumentation und Kommentare wurden mit Unterstuetzung von kuenstlicher Intelligenz (Claude, Anthropic) erstellt.
 
-Installiere die folgenden Standard-Werkzeuge, sofern noch nicht vorhanden:
+## Architektur
 
-1. **Git:** [git-scm.com](https://git-scm.com/downloads) (Wähle während der Installation "Use Git from the Windows Command Prompt").
-2. **GitHub Desktop:** [desktop.github.com/download/](https://desktop.github.com/download/) (Empfohlen für den einfachen und grafischen Git-Workflow).
-3. **Python:** Installiere eine Python Distribution deiner Wahl.
+Sender (Heltec Wireless Stick Lite V3, im Briefkasten):
+stuendlicher Deep-Sleep-Zyklus, Messung der Akkuspannung (GPIO 1, Teilerfaktor 4.9, Hysterese 3.45 V / 3.60 V) und der Distanz zur Rueckwand per VL53L0X (I2C an GPIO 41/42, Hysterese 65 mm / 75 mm). Bei einem Ereignis wird eine AES-128-CBC-verschluesselte Nachricht per SX1262 gesendet (868 MHz, SF9, BW 125 kHz, CR 4/8, Syncword 0x12, -5 dBm). Die Zustandsflags liegen im RTC-RAM und ueberleben den Deep Sleep.
 
----
+Gateway (Heltec WiFi LoRa 32 V3):
+WLAN-Anbindung, nicht blockierender LoRa-Empfang per DIO1-Interrupt, Entschluesselung und Versand einer E-Mail ueber Gmail (Port 465, bis zu fuenf Versuche). Das OLED zeigt Raumklima (BME280 an GPIO 41/42, Adresse 0x77) und den Systemstatus. Ein Task-Watchdog (15 s) ueberwacht die Hauptschleife und wird waehrend des SMTP-Versands mitgefuettert.
 
-## 2. Python-Umgebung & Thonny IDE Setup
+## Projektstruktur
 
-Um Paketkonflikte zu vermeiden und eine saubere Entwicklungsumgebung für die Programmierung des Sensors zu gewährleisten, nutzen wir eine isolierte Umgebung innerhalb von Miniforge.
-
-1. Öffne den **Miniforge Prompt** über das Windows-Startmenü.
-2. Erstelle ein neues Environment mit Python und Pip:
-   ```bash
-   conda create -n thonny_env python=3.12 pip -y
-   ```
-3. Aktiviere das Environment:
-   ```bash
-   conda activate thonny_env
-   
-   ```
-4. Installiere Thonny innerhalb dieses Environments:
-   ```bash
-   python -m pip install thonny
-   
-   ```
-5. **Starten der IDE:** Um Thonny zu nutzen, öffne den Miniforge Prompt und gib folgende Befehle ein:
-   ```bash
-   conda activate thonny_env
-   thonny
-   
-   ```
-
----
-
-## 3. Git-Ersteinrichtung & Konfiguration
-
-Damit Git deine Änderungen korrekt zuordnen kann, müssen Name und E-Mail hinterlegt werden. Bei Nutzung von GitHub Desktop erfolgt dies meist automatisch bei der Anmeldung. Alternativ öffne ein Terminal (z. B. in VS Code oder den Miniforge Prompt) und führe aus:
-
-```bash
-git config --global user.name "Dein Vor- und Nachname"
-git config --global user.email "deine.email@beispiel.de"
+```
+platformio.ini            Umgebungen: sender, gateway, provision
+.env.example              Vorlage fuer Zugangsdaten
+scripts/load_env.py       Liest .env fuer die Provisionierung ein
+src/common/               Gemeinsame Module (NVS, AES)
+src/sender/               Firmware Sendemodul
+src/gateway/              Firmware Gateway inkl. SMTP-Client
+src/provision/            Einmalige NVS-Provisionierung (ersetzt setup_NVS.py)
 ```
 
-* **VS Code Extensions:** Die "Git Base" Extension ist standardmäßig aktiv. Für eine bessere Übersicht sind "GitHub Pull Requests" & "GitLens" empfehlenswert.
-* **Authentifizierung:** Beim ersten Hochladen öffnet sich in der Regel automatisch ein Browserfenster zur Anmeldung ("Sign in with GitHub").
+## Inbetriebnahme
 
----
+1. `.env.example` als `.env` kopieren und Werte eintragen. Der AES-Schluessel muss exakt 16 Zeichen lang sein.
 
-## 4. Projekt-Setup
-
-Verknüpfe dein lokales Arbeitsverzeichnis mit dem Projekt-Repository.
-
-**Option A: Über GitHub Desktop (Empfohlen)**
-1. Gehe in GitHub Desktop auf `File` > `Clone repository...`.
-2. Wähle den Tab `URL` und füge den Link ein: `https://github.com/TheSecretJas/BriefkastenSensor`
-3. Wähle deinen lokalen Zielordner aus und klicke auf `Clone`.
-4. Öffne den resultierenden Ordner anschließend in VS Code (`Datei` > `Ordner öffnen...`).
-
-**Option B: Über das Terminal (Alternativ)**
-1. Erstelle einen lokalen Ordner für deine Projekte.
-2. Klone das **Briefkastensensor** Repository:
-   ```bash
-   git clone [https://github.com/TheSecretJas/BriefkastenSensor](https://github.com/TheSecretJas/BriefkastenSensor)
-   
+2. Flash der Chips vollstaendig loeschen. Das ist wichtig, weil die Partitionstabelle von MicroPython nicht mit der Arduino-Tabelle uebereinstimmt und alte NVS-Reste sonst zu undefiniertem Verhalten fuehren koennen:
    ```
-3. Öffne den Ordner in gewünschter SW, um Änderungen vorzunehmen:
-   * `Datei` > `Ordner öffnen...` > Wähle den Ordner `BriefkastenSensor` aus.
-
-
----
-
-## 5. Git-Workflow
-
-Da die Arbeit mit der Konsole im Entwicklungs-Alltag schnell unübersichtlich wird, ist **GitHub Desktop** die empfohlene Alternative.
-
-### 5.1 Workflow mit GitHub Desktop (Empfohlen)
-
-1. **Stand synchronisieren:** Klicke oben in der Leiste auf **"Fetch origin"** (und anschließend auf **"Pull origin"**, falls neue Änderungen vorhanden sind), um vor Arbeitsbeginn den aktuellen Stand vom Server zu laden.
-2. **Feature-Branch erstellen:** Klicke oben auf **"Current Branch"** -> **"New Branch"**. Gib einen passenden Namen ein (z. B. `feature/name-der-anpassung`) und erstelle den Branch basierend auf `main`.
-3. **Änderungen committen:** 
-   * Prüfe in der linken Spalte die geänderten Dateien und wähle nur die aus, die wirklich Teil deiner Änderung sind.
-   * Gib unten links unter **"Summary"** eine kurze, prägnante Beschreibung der Änderung ein.
-   * Klicke auf den blauen Button **"Commit to [Branch-Name]"**.
-4. **Branch aktuell halten:** Bei längerer Bearbeitungsdauer im oberen Menü auf **"Branch"** -> **"Merge into current branch..."** gehen, `main` auswählen und bestätigen, um Konflikte frühzeitig zu lösen.
-5. **Push & Pull Request:** Klicke oben auf **"Publish branch"** (oder **"Push origin"**). Danach erscheint ein Button **"Create Pull Request"**, der dich direkt zu GitHub weiterleitet, um deine Änderungen einzureichen.
-
-### 5.2 Workflow über die Konsole (Alternativ)
-
-1. **Stand synchronisieren:**
-   ```bash
-   git pull origin main
+   pio run -e provision -t erase
    ```
-2. **Feature-Branch erstellen:**
-   ```bash
-   git switch -c feature/name-der-anpassung
+
+3. Provisionierung auf beide Chips flashen und die serielle Ausgabe pruefen:
    ```
-3. **Änderungen committen:** (Vorab den Status prüfen)
-   ```bash
-   git status
-   git add .
-   git commit -m "Kurze, prägnante Beschreibung der Änderung"
+   pio run -e provision -t upload
+   pio device monitor
    ```
-4. **Branch aktuell halten:**
-   ```bash
-   git merge main
+   Erwartete Ausgabe: "Zugangsdaten erfolgreich im NVS gespeichert".
+
+4. Eigentliche Firmware flashen (die NVS-Daten bleiben dabei erhalten):
    ```
-5. **Push & Pull Request:**
-   ```bash
-   git push origin feature/name-der-anpassung
-   
+   pio run -e sender -t upload    # Chip im Briefkasten
+   pio run -e gateway -t upload   # Gateway
    ```
+
+## Web-Portal
+
+Das Gateway stellt im LAN ein Web-Portal unter http://briefkastensensor.local/ bereit (alternativ ueber die IP-Adresse, siehe serielle Ausgabe). Es zeigt:
+
+- Zustand des Sendemoduls: Brief-Flag, Akku-Warnflag, Akkuspannung, gemessene Distanz und Zeitpunkt des letzten Kontakts
+- Raumklima des Gateways (BME280) und die aktuelle Statuszeile
+- Button "Sender-Flags zuruecksetzen" fuer den ferngesteuerten Reset
+- Konfigurationsformular fuer WLAN, SMTP und Empfaenger
+
+Das initiale Setup laeuft ausschliesslich ueber die .env Provisionierung. Danach koennen die Werte im Portal geaendert werden; nach dem Speichern startet das Gateway neu. Sicherheitsregeln des Portals:
+
+- Gespeicherte Passwoerter werden niemals angezeigt (Schreibfelder, leer = unveraendert)
+- Der AES-Schluessel ist nicht ueber das Portal aenderbar, nur per .env
+- Mit PORTAL_PASS in der .env wird das Portal per HTTP Basic Auth geschuetzt (Benutzer: admin). Ohne Passwort ist das Portal fuer jeden im LAN offen.
+
+## Funkprotokoll und ferngesteuerter Flag-Reset
+
+Der Sender schlaeft fast durchgehend, das Gateway kann ihm daher nichts direkt zustellen. Geloest wird das Class-A-artig:
+
+1. Der Sender sendet bei jedem Aufwachen (stuendlich) ein verschluesseltes SYNC-Paket: `SYNC <mail_flag>,<batt_flag>,<spannung>,<distanz>`. Das Gateway aktualisiert damit das Portal, versendet aber keine E-Mail. Flag-Aenderungen und der Akkustatus sind so automatisch stuendlich im Portal sichtbar (uebererfuellt die 24-h-Anforderung bei minimalen Energiekosten von rund 150 ms Sendezeit plus 2 s Empfangsfenster pro Stunde).
+2. Nach dem SYNC lauscht der Sender 2 Sekunden auf Kommandos.
+3. Ein Klick auf den Reset-Button merkt das Kommando im Gateway vor. Beim naechsten SYNC wird `CMD RESET FLAGS` verschluesselt zugestellt, der Sender setzt beide Flags auf null und bestaetigt mit einem weiteren SYNC. Wirksamkeit somit in maximal einer Stunde.
+4. Ereignisnachrichten (`STATUS NEW MAIL`, `STATUS BATTERY LOW`) loesen weiterhin E-Mails aus. Der Versand wird kurz aufgeschoben, bis der Paket-Burst des Senders abgearbeitet ist, damit das Reset-Kommando das Empfangsfenster nicht verpasst.
+
+## Hinweise und Unterschiede zur MicroPython-Version
+
+- Zustandsspeicher: statt `rtc.memory()` mit String-Parsing werden `RTC_DATA_ATTR`-Variablen verwendet. Ein Power-Cycle (Akku ab und wieder an) setzt beide Flags auf null; das ersetzt `resett_flags.py`.
+- Board-Definition: fuer den Wireless Stick Lite V3 existiert in PlatformIO keine eigene Definition. Es wird die des WiFi LoRa 32 V3 verwendet, da beide Boards elektrisch identisch sind (ESP32-S3FN8, 8 MB Flash, gleiche SX1262-Pinbelegung).
+- TLS: der SMTP-Client prueft das Zertifikat von smtp.gmail.com per `setCACert()` gegen das eingebettete Google-Root-Zertifikat GTS Root R1 (gueltig bis 2036, siehe `src/gateway/gts_root_r1.h`). Dafuer synchronisiert das Gateway nach dem WLAN-Aufbau die Systemzeit per NTP; ohne gueltige Zeit schlaegt die Zertifikatspruefung fehl. Sollte Google die Kette wechseln, muss das Zertifikat aus https://pki.goog/repository/ aktualisiert werden.
+- Watchdog: die MicroPython-Version konnte waehrend eines langen SMTP-Versands theoretisch in den Watchdog-Reset laufen. Der C++-SMTP-Client fuettert den Watchdog daher aktiv mit.
+- Padding-Pruefung: das Gateway validiert das PKCS7-Padding vollstaendig, bevor eine Nachricht akzeptiert wird. Ungueltige oder fremde Pakete werden verworfen.
+- ADC: die Umrechnung `(raw / 4095) * 3.3 * 4.9` wurde beibehalten, damit die kalibrierten Schwellwerte gueltig bleiben. Genauer waere `analogReadMilliVolts()`, dann muessten die Schwellen aber neu vermessen werden.
+
+## Sicherheitshinweis
+
+Die `.env` Datei enthaelt Zugangsdaten und darf nicht eingecheckt werden (siehe `.gitignore`). Das Funkprotokoll bietet Vertraulichkeit, aber keinen Schutz gegen Replay-Angriffe: ein mitgeschnittenes Paket koennte erneut gesendet werden und loest dann eine E-Mail aus. Falls das relevant ist, kann ein Zaehler in die Nachricht aufgenommen werden, den das Gateway auf Monotonie prueft.
